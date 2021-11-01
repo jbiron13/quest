@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Template for quest EC2 deploy
+
+Parameters: 
+  Name:
+    Description: Used for naming of resources
+    Type: String
+    Default: quest
+  Ec2InstanceType:
+    Description: Instance type/size to use
+    Type: String
+    Default: t2.micro
+  Ami:
+    Description: AMI image to be used for instance creation - default AL2
+    Type: String
+    Default: ami-02e136e904f3da870
+  S3Bucket:
+    Description: Bucket where needed files live
+    Type: String
+    Default: quest-jbiron
+  VpcCidr:
+    Description: VPC CIDR
+    Type: String
+    Default: 10.0.0.0/16
+  SubnetCidr:
+    Description: CIDR to use for the first subnet
+    Type: String
+    Default: 10.0.0.0/24
+  MyIpCidr:
+    Description: Current public IP for me
+    Type: String
+    Default: 0.0.0.0/0
+  SubnetAz:
+    Default: us-east-1a
+    Type: String
+  KmsKey:
+    Type: String
+    Default: arn:aws:kms:us-east-1:203733355362:key/4064dd8f-c65f-4264-9d00-69acb1d8ad0c
+
+Resources: 
+  vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Application
+          Value: !Ref Name
+  subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Ref SubnetAz
+      VpcId: !Ref vpc
+      CidrBlock: !Ref SubnetCidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Application
+          Value: !Ref Name
+
+  internetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Application
+          Value: !Ref Name
+
+  attachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref vpc
+      InternetGatewayId: !Ref internetGateway
+
+  publicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref vpc
+      Tags:
+        - Key: Name
+          Value: LUIT Project Public Routes
+
+  publicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: attachGateway
+    Properties:
+      RouteTableId: !Ref publicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref internetGateway
+
+  subnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref publicRouteTable
+      SubnetId: !Ref subnet
+
+  securityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: quest-ec2
+      GroupDescription: Ingress rules
+      VpcId: !Ref vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref MyIpCidr
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIpCidr
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref MyIpCidr 
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: !Ref MyIpCidr
+      Tags:
+        - Key: Application
+          Value: !Ref Name
+
+  iamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: quest
+      AssumeRolePolicyDocument: 
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+        - 
+         PolicyName: !Ref Name
+         PolicyDocument:
+           Version: "2012-10-17"
+           Statement:
+              - 
+                Effect: "Allow"
+                Action: "s3:GetObject"
+                Resource: !Sub
+                          - "arn:${AWS::Partition}:s3:::${S3Bucket}/*"
+                          -
+                            S3Bucket: !Ref S3Bucket
+              -
+                Effect: "Allow"
+                Action: "kms:Decrypt"
+                Resource: !Ref KmsKey
+  
+  instanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref iamRole
+      InstanceProfileName: !Ref Name
+
+  ec2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: quest
+      DisableApiTermination: false
+      ImageId: !Ref Ami
+      InstanceType: !Ref Ec2InstanceType
+      Monitoring: false
+      IamInstanceProfile: !Ref instanceProfile
+      SecurityGroupIds:
+        - !Ref securityGroup
+      SubnetId: !Ref subnet
+      # UserData: !Base64 |
+      #   #!/bin/bash -ex
+      #   # put your script here
+      Tags:
+        - Key: Application
+          Value: !Ref Name
+      UserData: 
+        Fn::Base64:
+          !Sub
+          - |
+            #!/bin/bash -x
+            export LOG="/root/install/install.log"
+            mkdir /root/install
+            yum install -y gcc-c++ make &>>$LOG
+            curl -sL https://rpm.nodesource.com/setup_14.x | sudo -E bash - &>>$LOG
+            yum install -y nodejs &>>$LOG
+            mkdir /quest
+            cd /quest
+            aws s3 cp s3://${S3Bucket}/quest.tar . &>>$LOG
+            tar xf quest.tar &>>$LOG
+            chmod +x ./start.sh &>>$LOG
+            cp quest.service /etc/systemd/system/ &>>$LOG
+            systemctl enable quest.service &>>$LOG
+            systemctl start quest.service &>>$LOG
+          -
+            S3Bucket: !Ref S3Bucket
+
