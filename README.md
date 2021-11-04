@@ -28,6 +28,7 @@ This was fun. I tried many different things to improve this deployment but, agai
   - Auto-scaling
   - Secrets stored in Secrets Manager instead of as a k8s secret
   - IaC for any configuration peformed manually
+  - Better security. This is pretty wide open.
 
 Thanks for looking. Let me know if you have any questions or comments.
 
