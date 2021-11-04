@@ -10,7 +10,7 @@ A template to create an EC2 instance was created. This template creates the inst
 #### Terraform
 
 ##### This implementation contains all the requirements. It includes:
-  - A Dockerfile to create the iamge.
+  - A Dockerfile to create the image.
   - Terraform templates to create an EKS cluster and all the resources needed.
   - Helm templates to deploy the application into the cluster.
   
